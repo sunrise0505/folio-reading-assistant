@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from .document_import import (
-    MAX_ARTICLE_LENGTH, MAX_FILE_BYTES, MAX_TEXT_FILE_BYTES, DocumentFormat, DocumentImportError, extract_document,
+    MAX_ARTICLE_LENGTH, MAX_FILE_BYTES, MAX_TEXT_FILE_BYTES, DocumentFormat, DocumentImportError, ExtractionMode, extract_document,
 )
 from .models import Activity, Article, ArticleTranslation, Base, Example, RemovedArticle, Vocabulary
 from .reading import (
@@ -218,7 +218,7 @@ def create_app(database: Path | None = None) -> FastAPI:
         return [{"id": article.id} for article in articles]
 
     @app.post("/api/articles/extract")
-    async def extract_article(request: Request, format: DocumentFormat):
+    async def extract_article(request: Request, format: DocumentFormat, mode: ExtractionMode = "auto"):
         is_text = format in {"txt", "md"}
         size_limit = MAX_TEXT_FILE_BYTES if is_text else MAX_FILE_BYTES
         data = bytearray()
@@ -228,7 +228,7 @@ def create_app(database: Path | None = None) -> FastAPI:
                 raise HTTPException(413, message)
             data.extend(chunk)
         try:
-            return await run_in_threadpool(extract_document, data, format)
+            return await run_in_threadpool(extract_document, data, format, mode)
         except DocumentImportError as error:
             raise HTTPException(422, str(error)) from error
 

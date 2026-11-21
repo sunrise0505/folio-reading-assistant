@@ -4,8 +4,7 @@ import { ArrowRight, ArrowUpRight, Check, ChevronLeft, ChevronRight, Plus, Trash
 import { api, errorText, examLevels } from './api'
 import type { Activity, Article, Mastery, ReaderArticle, Vocabulary } from './api'
 import { ArticleCard, FeaturedArticleCard } from './ArticleCard'
-import { ArticleCover } from './ArticleCover'
-import { EditorialMark } from './EditorialMark'
+import { ArticleCover, articleCoverImage } from './ArticleCover'
 import { ImportForm } from './ImportForm'
 import { Reader } from './Reader'
 import { Review } from './Review'
@@ -42,11 +41,11 @@ function ArticleLibrary({ articles, activity, count, dueCount, onOpen, onImport,
   const inProgress = articles.findLast(article => !article.completed_on && article.paragraph > 0)
   const spotlight = matching.length >= 3 && filter === '全部文章' && !search.trim() && !activeSource && !exam
   const archive = spotlight ? matching.slice(3) : matching
-  const filterKey = JSON.stringify([filter, activeSource, exam])
 
   function cardProps(article: Article) {
     return {
       article,
+      image: articleCoverImage(article),
       onOpen: () => onOpen(article.id),
       onRemove: () => { setRemoveError(''); setDeleting(article) },
     }
@@ -68,7 +67,7 @@ function ArticleLibrary({ articles, activity, count, dueCount, onOpen, onImport,
   }
 
   return <div className="page-content library-page">
-    <PageHeading label="Reading Room" title="文章库" mark={<EditorialMark />}>
+    <PageHeading title="文章库">
       <div className="library-edition">
         <span>{articles.length} 篇文章</span>
         {activity && <time className="edition-date" dateTime={activity.today}>{activity.today.replaceAll('-', ' / ')}</time>}
@@ -76,10 +75,7 @@ function ArticleLibrary({ articles, activity, count, dueCount, onOpen, onImport,
     </PageHeading>
     <section className="library-articles" aria-label="文章列表">
       <div className="library-toolbar">
-        <div className="section-heading">
-          <h2 className="library-label">最近文章</h2>
-          <SearchField label="搜索文章" value={search} onChange={event => setSearch(event.target.value)} placeholder="搜索文章" />
-        </div>
+        <SearchField label="搜索文章" value={search} onChange={event => setSearch(event.target.value)} placeholder="搜索文章" />
         <div className="catalog-filters">
           <label>出处<select aria-label="按出处筛选" value={activeSource} onChange={event => setSource(event.target.value)}>
             <option value="">全部出处</option>
@@ -94,13 +90,13 @@ function ArticleLibrary({ articles, activity, count, dueCount, onOpen, onImport,
           <button key={label} className={filter === label ? 'selected' : ''} aria-pressed={filter === label} onClick={() => setFilter(label)}>{label}</button>
         )}</div>
       </div>
-      <div className="catalog-results" key={filterKey}>
+      <div className="catalog-results">
         {spotlight && <ul className="article-list article-list--spread">
           <FeaturedArticleCard {...cardProps(matching[0])} />
           {matching.slice(1, 3).map(article => <ArticleCard key={article.id} {...cardProps(article)} variant="secondary" />)}
         </ul>}
         {!matching.length && <Empty title={articles.length ? '没有符合条件的文章' : '文章库还是空的'}
-          illustration={<ArticleCover category="文化与生活" title="Folio" />}>
+          illustration={<ArticleCover category="文化与生活" label="Folio" />}>
           {articles.length ? <Button variant="text" onClick={() => { setSearch(''); setFilter('全部文章'); setSource(''); setExam('') }}>查看全部文章</Button> :
             <Button variant="primary" onClick={onImport}>导入第一篇文章</Button>}
         </Empty>}
@@ -225,7 +221,7 @@ function VocabularyList({ words, onChange, onOpen, onRead }: {
       <select aria-label="按文章筛选" value={filter} onChange={event => setFilter(event.target.value)}><option value="">全部来源</option>{Array.from(articles, ([id, title]) => <option key={id} value={id}>{title}</option>)}</select>
     </div>
     {!shown.length ? <Empty title={words.length ? '没有找到生词' : '还没有收藏生词'}
-      illustration={<ArticleCover category="文化与生活" title="Vocabulary" />}>
+      illustration={<ArticleCover category="文化与生活" label="Words" />}>
       {words.length ? <Button variant="text" onClick={() => { setQuery(''); setFilter('') }}>清除筛选</Button> :
         <Button onClick={onRead}>去读文章</Button>}
     </Empty> : <div className="word-list">
@@ -427,7 +423,7 @@ export function App() {
         else navigate(view)
       }} backLabel={tabs.find(tab => tab.key === view)!.label} onUpdate={article => { setReader({ ...reader, article }); void refresh() }} onSaved={updateSavedWords} onError={setError} /> :
         loading ? <div className="page-content library-page">
-          <PageHeading label="Reading Room" title="文章库" />
+          <PageHeading title="文章库" />
           <p className="library-loading muted" role="status">正在读取文章…</p>
         </div> :
         view === 'library' ? <ArticleLibrary key={libraryRevision} articles={articles} activity={activity} count={words.length} dueCount={queue.length}

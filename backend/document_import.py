@@ -1,6 +1,7 @@
 import re
 from collections import Counter
 from collections.abc import Iterable, Iterator
+from contextlib import ExitStack
 from dataclasses import dataclass
 from io import BytesIO
 from typing import Literal
@@ -14,9 +15,12 @@ from pypdf import PdfReader
 from pypdf.errors import PyPdfError
 from pypdf.generic import Destination
 
+from .pdf_ocr import PdfOCRError, pdf_ocr
+from .exam_import import extract_exam_articles
 from .reading import WORD
 
 DocumentFormat = Literal["txt", "md", "docx", "pdf"]
+ExtractionMode = Literal["auto", "exam"]
 MAX_FILE_BYTES = 10_000_000
 MAX_TEXT_FILE_BYTES = 400_000
 MAX_ARTICLE_LENGTH = 100_000
@@ -77,26 +81,46 @@ def docx_blocks(source: BytesIO) -> Iterator[Block]:
                     yield Block(text)
 
 
-def pdf_preview(source: BytesIO) -> dict:
+def pdf_preview(source: BytesIO, mode: ExtractionMode = "auto") -> dict:
     reader = PdfReader(source)
     if reader.is_encrypted:
         raise DocumentImportError("PDF 有加密保护，请上传解除保护的副本。")
     if len(reader.pages) > MAX_PDF_PAGES:
         raise DocumentImportError(f"PDF 超过 {MAX_PDF_PAGES} 页，请拆分后上传。")
     pages = []
+    page_texts = []
+    ocr_pages = []
     length = 0
-    for page in reader.pages:
-        text = page.extract_text(extraction_mode="layout") or page.extract_text()
-        blocks = list(text_blocks(text))
-        length += sum(len(" ".join(block.text.split())) + 2 for block in blocks)
-        if length > MAX_ARTICLE_LENGTH + 2:
-            raise DocumentImportError("提取的正文超过 10 万字符，请拆分后上传。")
-        pages.append(blocks)
+    recognize = None
+    try:
+        with ExitStack() as resources:
+            for index, page in enumerate(reader.pages):
+                text = page.extract_text(extraction_mode="layout") or page.extract_text()
+                if len(WORD.findall(text or "")) < 20 and page.images:
+                    if recognize is None:
+                        recognize = resources.enter_context(pdf_ocr(source.getvalue()))
+                    recognized = recognize(index)
+                    if len(WORD.findall(recognized)) > len(WORD.findall(text or "")):
+                        text = recognized
+                        ocr_pages.append(index + 1)
+                blocks = list(text_blocks(text))
+                length += sum(len(" ".join(block.text.split())) + 2 for block in blocks)
+                if length > MAX_ARTICLE_LENGTH + 2:
+                    raise DocumentImportError("提取的正文超过 10 万字符，请拆分后上传。")
+                pages.append(blocks)
+                page_texts.append(text or "")
+    except PdfOCRError as error:
+        raise DocumentImportError(str(error)) from error
 
     preview = assemble_preview((block for page in pages for block in page), "pdf")
+    if ocr_pages:
+        preview["ocr_pages"] = ocr_pages
     bookmarked = bookmarked_articles(reader, pages)
     if bookmarked:
         preview["articles"] = bookmarked
+    exam = extract_exam_articles(page_texts, required=mode == "exam")
+    if exam:
+        preview.update(exam)
     return preview
 
 
@@ -187,12 +211,12 @@ def assemble_preview(blocks: Iterable[Block], format: DocumentFormat) -> dict:
     body = "\n\n".join(block.text for block in parts)
     if not WORD.search(body):
         if format == "pdf":
-            raise DocumentImportError("PDF 中没有可提取的英文正文。扫描件请先转换成可选中文字的 PDF。")
+            raise DocumentImportError("PDF 中没有识别到英文正文。若是扫描件，请尝试上传更清晰的副本。")
         raise DocumentImportError("文件中没有可提取的英文正文。")
     return {"body": body, "articles": suggest_articles(parts)}
 
 
-def extract_document(data: bytearray, format: DocumentFormat) -> dict:
+def extract_document(data: bytearray, format: DocumentFormat, mode: ExtractionMode = "auto") -> dict:
     if format in {"txt", "md"}:
         try:
             text = data.decode("utf-8-sig")
@@ -202,13 +226,21 @@ def extract_document(data: bytearray, format: DocumentFormat) -> dict:
             raise DocumentImportError("提取的正文超过 10 万字符，请拆分后上传。")
         preview = assemble_preview(text_blocks(text, markdown=format == "md"), format)
         preview["body"] = text
+        exam = extract_exam_articles([text], required=mode == "exam")
+        if exam:
+            preview.update(exam)
         return preview
 
     try:
         with BytesIO(data) as source:
             if format == "pdf":
-                return pdf_preview(source)
-            return assemble_preview(docx_blocks(source), format)
+                return pdf_preview(source, mode)
+            blocks = list(docx_blocks(source))
+            preview = assemble_preview(blocks, format)
+            exam = extract_exam_articles(["\n\n".join(block.text for block in blocks)], required=mode == "exam")
+            if exam:
+                preview.update(exam)
+            return preview
     except DocumentImportError:
         raise
     except (BadZipFile, PackageNotFoundError, XMLSyntaxError, PyPdfError, ValueError, KeyError, OSError) as error:

@@ -15,9 +15,9 @@ export function IconButton({ className = '', type = 'button', ...props }: Button
   return <button {...props} type={type} className={'icon-button ' + className} />
 }
 
-export function PageHeading({ label, title, mark, children }: { label: string; title: string; mark?: ReactNode; children?: ReactNode }) {
+export function PageHeading({ label, title, children }: { label?: string; title: string; children?: ReactNode }) {
   return <div className="page-heading">
-    <div><p className="section-label" lang="en">{label}</p><h1>{title}{mark}</h1></div>
+    <div>{label && <p className="section-label" lang="en">{label}</p>}<h1>{title}</h1></div>
     {children}
   </div>
 }

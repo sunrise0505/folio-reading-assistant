@@ -5,7 +5,8 @@
 ## 功能
 
 - 文章库支持内置样文、媒体导读、粘贴正文，以及上传 UTF-8 TXT／Markdown、DOCX 和 PDF。上传后先在导入窗口核对、编辑正文，再保存文章。每篇文章的来源可选填，从常用外刊下拉框选择或手动输入。DOCX 和 PDF 单个文件上限为 10 MB，PDF 上限为 100 页，正文上限为 10 万字符。
-- PDF 导入提取可选中的文字。扫描件需要先做 OCR，报刊双栏等复杂排版建议在保存前核对顺序。
+- PDF 导入会提取可选中的文字。纯图片页使用本地英文 OCR，识别结果可在导入窗口核对、编辑后保存。旧报纸、低清或双栏扫描件可能需要校对。
+- 考试试卷会自动尝试提取阅读文章，识别常见的 Passage One／Two、Text 1／2、Reading Passage 和阅读理解 A／B 分节，排除常见题干、选项与答案区。上传前也可勾选「这是考试试卷，优先提取阅读文章」。预览支持逐篇勾选、编辑和查看整份提取文本，确认后才保存。来源默认填试卷文件名，可手动修改。少于 45 个英文词的候选段落不会自动列入，识别失败时保留整份文本供整理。特殊排版、分栏、手写和模糊扫描件仍需要人工核对。
 - 可同时选多个文件。单个文件内可用 Markdown 一级标题、Word 的「标题／标题 1」，或明确的 `Title:`／`标题：` 与 `---` 分隔线标记文章。无法可靠拆分的文件按整篇预览。预览中可勾选或移除草稿、编辑标题与正文，也可把拆分结果恢复成整份文档。
 - 可按照 PDF 的顶层书签和起始页拆分合订文章。文章库每篇文章右侧可删除条目，已收藏的例句和打卡记录会保留。
 - 阅读器支持调整字号、行距、段宽，保存段落进度。本地词表收录的固定搭配只在每篇文章首次出现时加下划线，标题也计入。可划选整个短语查释义，或点其中一个词再点「查短语」。短语可以连同原句收藏和复习，未收录的短语可自填释义。
@@ -41,6 +42,16 @@ npm.cmd --prefix frontend run build
 
 最后一条命令启动服务。终端显示 `Uvicorn running on http://127.0.0.1:8000` 后，在同一台电脑打开 [本地阅读助手](http://127.0.0.1:8000/)。使用期间保持服务进程运行。按 Ctrl+C 会停止服务，下次从项目根目录执行对应平台的最后一条命令即可重新启动。
 
+### 启用扫描 PDF 的英文 OCR
+
+按上面的启动步骤安装 Python 依赖，再安装 Tesseract OCR：
+
+- macOS 执行 `brew install tesseract`。
+- Debian / Ubuntu 执行 `sudo apt install tesseract-ocr tesseract-ocr-eng`。
+- Windows 按 [Tesseract 安装说明](https://tesseract-ocr.github.io/tessdoc/Installation.html)安装，并把 Tesseract 的安装目录加入 PATH。
+
+执行 `tesseract --list-langs`，列表里有 `eng` 即可。安装完成后重启拾页。上传扫描 PDF 时，识别在本机进行。已识别的图片页数会显示在导入预览里。带文字层的 PDF、TXT、Markdown 和 DOCX 可直接导入。
+
 如果浏览器显示「连接被拒绝」，回到终端检查启动命令是否报错或已经退出。如果页面提示需要构建前端，在项目根目录运行 `npm --prefix frontend run build`（Windows PowerShell 使用 `npm.cmd --prefix frontend run build`），然后重新启动服务。如果启动时显示端口已占用，可改用 `--port 8001` 并访问对应端口。希望用空白记录自验时，按[架构文档中的独立验收步骤](docs/ARCHITECTURE.md#运行与数据存放)启动，并打开该步骤给出的地址。
 
 学习数据默认保存在项目根目录的 `data/reading.sqlite3`。阅读排版偏好存在当前浏览器。想保留学习记录时，停止服务后备份数据库文件即可。不同电脑上各自启动的应用有各自的数据。首次验收建议保留默认的本机绑定地址。
@@ -68,9 +79,11 @@ npm.cmd --prefix frontend run build
 
 - 词典和词形索引由 [ECDICT](https://github.com/skywind3000/ECDICT) 的 `ecdict.csv` 生成。选入按词频排名前 25,000 范围内、有英汉释义的词元，约 24,500 条，保留原项目 [MIT 许可证](backend/data/ECDICT-LICENSE.txt)。另有少量样文释义调整。生成脚本在 `scripts/build_dictionary.py`。
 - 常见固定搭配及释义和内置文章的中文译文随项目提供，见 [短语词表](backend/data/phrases.tsv)和[内置译文](backend/data/article_translations.json)。
+- 首页的城市街景与图书馆实拍采用 Unsplash License 和 CC BY 4.0。摄影者、原图和许可见[文章封面来源](docs/DESIGN.md#文章封面来源)。
 - 三篇样文与七篇媒体学习导读由拾页编写。媒体导读链接至 China Daily、The Economist、The Times 和 The Guardian 的具体文章。站内展示学习导读，媒体原文请通过阅读页的原文链接访问。界面图标使用 [Lucide](https://github.com/lucide-icons/lucide)（ISC）。应用框架和库的版本见 `frontend/package-lock.json` 和 `requirements.lock.txt`。
 - 当前版本运行时没有模型依赖。公开网页 URL 抽取、AI 语境释义和 TTS 留作后续迭代。
 - 文档提取使用 [python-docx](https://pypi.org/project/python-docx/)（MIT）和 [pypdf](https://pypi.org/project/pypdf/)（BSD-3-Clause）。
+- 扫描 PDF 使用 [pypdfium2](https://pypi.org/project/pypdfium2/) 渲染（BSD-3-Clause / Apache-2.0 及依赖许可）、[Pillow](https://pypi.org/project/Pillow/) 处理图片（MIT-CMU）、[Tesseract](https://github.com/tesseract-ocr/tesseract) 本地识别（Apache-2.0）。
 
 ## AI 工具使用声明
 

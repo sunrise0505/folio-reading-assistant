@@ -12,6 +12,8 @@ type UploadGroup = {
   filename: string
   original: ArticleInput
   canKeepWhole: boolean
+  ocrPageCount: number
+  warnings: string[]
   drafts: Draft[]
 }
 
@@ -47,6 +49,7 @@ export function ImportForm({ close, imported }: {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState('')
+  const [examMode, setExamMode] = useState(false)
   const nextId = useRef(0)
   const drafts = uploads.flatMap(group => group.drafts)
   const active = drafts.find(draft => draft.id === activeId) ?? drafts[0]
@@ -68,14 +71,23 @@ export function ImportForm({ close, imported }: {
         if (file.size > (plainText ? 400_000 : 10_000_000)) {
           throw new Error(plainText ? '文本文件超过 400 KB。' : '文档超过 10 MB。')
         }
-        const parsed = await api<{ body: string; articles: { title: string; body: string }[] }>(
-          '/articles/extract?format=' + format, 'POST', file,
+        const parsed = await api<{
+          body: string; articles: { title: string; body: string }[]; ocr_pages?: number[]
+          warnings?: string[]; extraction_kind?: 'exam'
+        }>(
+          '/articles/extract?format=' + format + '&mode=' + (examMode ? 'exam' : 'auto'), 'POST', file,
         )
         const title = file.name.replace(/\.[^.]+$/, '').slice(0, 180)
-        const original: ArticleInput = { ...emptyArticle, title, body: parsed.body, format: format === 'md' ? 'md' : 'txt' }
+        const original: ArticleInput = {
+          ...emptyArticle, title, body: parsed.body, source: parsed.extraction_kind === 'exam' ? title : '',
+          format: format === 'md' ? 'md' : 'txt',
+        }
         const suggestions = parsed.articles.length ? parsed.articles : [{ title, body: parsed.body }]
         added.push({
-          id: nextId.current++, filename: file.name, original, canKeepWhole: suggestions.length > 1,
+          id: nextId.current++, filename: file.name, original,
+          canKeepWhole: suggestions.length > 1 || (parsed.extraction_kind === 'exam' && parsed.articles.length > 0),
+          ocrPageCount: parsed.ocr_pages?.length ?? 0,
+          warnings: parsed.warnings ?? [],
           drafts: suggestions.map(suggestion => ({
             id: nextId.current++, article: { ...original, ...suggestion }, selected: true,
           })),
@@ -103,7 +115,10 @@ export function ImportForm({ close, imported }: {
 
   function keepWhole(group: UploadGroup) {
     const draft = { id: nextId.current++, article: group.original, selected: true }
-    setUploads(previous => previous.map(item => item.id === group.id ? { ...item, canKeepWhole: false, drafts: [draft] } : item))
+    setUploads(previous => previous.map(item => item.id === group.id ? {
+      ...item, canKeepWhole: false, drafts: [draft],
+      warnings: item.warnings.length ? ['当前保留整份文本，包含试题和选项。可在下方编辑正文后导入。'] : [],
+    } : item))
     setActiveId(draft.id)
   }
 
@@ -147,7 +162,12 @@ export function ImportForm({ close, imported }: {
           event.currentTarget.value = ''
         }} />
       </label>
-      <p className="muted">可同时选择 TXT、Markdown、DOCX 和有文字层的 PDF。</p>
+      <p className="muted">可同时选择 TXT、Markdown、DOCX 和 PDF。英文扫描件会在本机识别，试卷阅读文章会自动尝试分篇。</p>
+      <label className="import-exam-mode">
+        <input type="checkbox" checked={examMode} disabled={locked} onChange={event => setExamMode(event.target.checked)} />
+        这是考试试卷，优先提取阅读文章
+      </label>
+      <p className="muted">上传前可勾选试卷模式。识别后可预览、编辑并勾选文章，确认后才会保存。</p>
       {progress && <p className="muted" role="status">{progress}</p>}
       {fileErrors.length > 0 && <ul className="import-errors form-error" role="alert">
         {fileErrors.map((message, index) => <li key={index}>{message}</li>)}
@@ -162,6 +182,12 @@ export function ImportForm({ close, imported }: {
             <span>{group.filename}</span>
             {group.canKeepWhole && <Button variant="text" disabled={locked} onClick={() => keepWhole(group)}>整份保留</Button>}
           </div>
+          {group.ocrPageCount > 0 && <p className="muted">已识别 {group.ocrPageCount} 页图片文字，请核对识别结果。</p>}
+          {group.warnings.map((message, index) => <p key={index} className="muted">{message}</p>)}
+          {group.warnings.length > 0 && <details className="import-original">
+            <summary>查看整份提取文本</summary>
+            <pre>{group.original.body}</pre>
+          </details>}
           <ul>{group.drafts.map(draft => <li key={draft.id} className={draft.id === active?.id ? 'selected' : ''}>
             <input type="checkbox" aria-label={'导入 ' + (draft.article.title || '未命名文章')} checked={draft.selected}
               disabled={locked} onChange={event => {

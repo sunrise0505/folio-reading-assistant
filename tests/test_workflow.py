@@ -1,10 +1,12 @@
 from datetime import date, timedelta
 from io import BytesIO
+from subprocess import CompletedProcess
 
 import pytest
 from docx import Document
 from fastapi.testclient import TestClient
-from pypdf import PdfWriter
+from PIL import Image, ImageDraw, ImageFont
+from pypdf import PdfReader, PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from backend.main import create_app
@@ -308,6 +310,52 @@ def test_pdf_preview_splits_on_bookmarked_pages_and_keeps_full_preview(client):
     ]
 
 
+def scanned_page_pdf():
+    pdf = BytesIO()
+    with Image.new("RGB", (700, 940), "white") as image:
+        ImageDraw.Draw(image).text((48, 120), "The scan has no text layer.", fill="black", font=ImageFont.load_default(size=34))
+        image.save(pdf, format="PDF", resolution=144)
+    pdf.seek(0)
+    return pdf
+
+
+def test_mixed_pdf_applies_ocr_only_to_scan_pages_and_preserves_bookmarks(client, monkeypatch):
+    def recognize(command, *, input, **options):
+        assert command == ["/example/tesseract", "stdin", "stdout", "-l", "eng", "--psm", "3"]
+        with Image.open(BytesIO(input)) as image:
+            assert image.format == "PNG"
+            assert image.convert("L").getextrema() == (0, 255)
+        return CompletedProcess(command, 0, b"Article B\n\nThe scan has no text layer.\n", b"")
+
+    monkeypatch.setattr("backend.pdf_ocr.shutil.which", lambda _: "/example/tesseract")
+    monkeypatch.setattr("backend.pdf_ocr.subprocess.run", recognize)
+    writer = PdfWriter()
+    set_pdf_page_text(writer.add_blank_page(width=300, height=400), "The first page has a text layer.")
+    with scanned_page_pdf() as scan:
+        writer.add_page(PdfReader(scan).pages[0])
+    writer.add_outline_item("Article A", 0)
+    writer.add_outline_item("Article B", 1)
+    with BytesIO() as content:
+        writer.write(content)
+        response = client.post("/api/articles/extract?format=pdf", content=content.getvalue())
+    assert response.status_code == 200
+    preview = response.json()
+    assert preview["ocr_pages"] == [2]
+    assert preview["body"] == "The first page has a text layer.\n\nArticle B\n\nThe scan has no text layer."
+    assert preview["articles"] == [
+        {"title": "Article A", "body": "The first page has a text layer."},
+        {"title": "Article B", "body": "The scan has no text layer."},
+    ]
+
+
+def test_scanned_pdf_without_an_installed_ocr_engine_explains_how_to_enable_it(client, monkeypatch):
+    monkeypatch.setattr("backend.pdf_ocr.shutil.which", lambda _: None)
+    with scanned_page_pdf() as scan:
+        response = client.post("/api/articles/extract?format=pdf", content=scan.getvalue())
+    assert response.status_code == 422
+    assert "Tesseract" in response.json()["detail"]
+
+
 @pytest.mark.parametrize("format", ["docx", "pdf"])
 def test_malformed_document_reports_an_import_error(client, format):
     result = client.post(f"/api/articles/extract?format={format}", content=b"not a document")
@@ -372,3 +420,135 @@ def test_removed_article_stays_out_of_library_but_keeps_learning_records(tmp_pat
         assert restarted.get("/api/review").json()[0]["examples"][0]["article_id"] == article_id
         assert restarted.get(f"/api/articles/{article_id}").status_code == 200
         assert restarted.get("/api/activity").json()["articles"] == 1
+
+
+EXAM_PASSAGE = (
+    "A public library gives people a quiet place to read and learn. "
+    "Students can find books and share ideas with other readers. "
+    "Local workers often visit after a busy day because the building offers "
+    "comfortable desks and useful information. Even when books are available "
+    "online, these shared spaces remain an important part of community life."
+)
+
+
+@pytest.mark.parametrize('first,second,heading', [
+    ('Passage One', 'Passage Two', 'Part III Reading Comprehension'),
+    ('Text 1', 'Text 2', 'Reading comprehension'),
+    ('READING PASSAGE 1', 'READING PASSAGE 2', 'IELTS Academic Reading'),
+    ('A', 'B', '阅读理解'),
+])
+def test_exam_preview_splits_passages_without_questions_and_waits_for_confirmation(client, first, second, heading):
+    before = client.get('/api/articles').json()
+    paper = '\n\n'.join([
+        heading, first, 'The value of libraries', EXAM_PASSAGE,
+        '21. What does the author suggest?', 'A) Buy more books. B) Close local libraries.',
+        second, EXAM_PASSAGE.replace('library', 'school'),
+        '26. What is the purpose of the passage?', 'A. To explain a change.',
+        'Answer key', '21 A 26 B',
+    ])
+    response = client.post('/api/articles/extract?format=txt', content=paper.encode())
+    assert response.status_code == 200
+    preview = response.json()
+    assert preview['extraction_kind'] == 'exam'
+    assert preview['body'] == paper
+    assert len(preview['articles']) == 2
+    assert preview['articles'][0] == {'title': 'The value of libraries', 'body': EXAM_PASSAGE}
+    assert preview['articles'][1]['body'] == EXAM_PASSAGE.replace('library', 'school')
+    assert preview['warnings']
+    assert client.get('/api/articles').json() == before
+    saved = client.post('/api/articles/batch', json=preview['articles'])
+    assert saved.status_code == 201
+    assert len(saved.json()) == 2
+
+
+def test_exam_preview_keeps_wrapped_first_sentence_and_continues_across_pages(client):
+    writer = PdfWriter()
+    for lines in [
+        ['English Practice Exam', 'Reading Comprehension', 'Passage One',
+         'A public library gives people a quiet', 'place to read and learn.', '',
+         'Students can find books and share ideas with other readers.', 'Page 1'],
+        ['English Practice Exam',
+         'Local workers often visit after a busy day because the building offers',
+         'comfortable desks and useful information. Even when books are available',
+         'online, these shared spaces remain an important part of community life.',
+         '21. What is the main idea?', 'A) Libraries are useful.', 'Page 2'],
+    ]:
+        page = writer.add_blank_page(width=600, height=800)
+        set_pdf_page_text(page, '')
+        stream = DecodedStreamObject()
+        commands = ['BT /F1 11 Tf 15 TL 30 760 Td']
+        commands.extend('(' + line.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)') + ') Tj T*' for line in lines)
+        commands.append('ET')
+        stream.set_data('\n'.join(commands).encode())
+        page.replace_contents(stream)
+    with BytesIO() as content:
+        writer.write(content)
+        response = client.post('/api/articles/extract?format=pdf', content=content.getvalue())
+    assert response.status_code == 200
+    preview = response.json()
+    assert len(preview['articles']) == 1
+    body = preview['articles'][0]['body']
+    assert 'A public library gives people a quiet place to read and learn.' in body
+    assert 'community life.' in body
+    assert 'English Practice Exam' not in body
+    assert 'Page 1' not in body and 'Page 2' not in body
+    assert 'What is the main idea' not in body
+
+
+def test_scanned_exam_with_small_text_watermark_still_uses_ocr(client, monkeypatch):
+    def recognize(command, **options):
+        text = 'Reading Comprehension\nPassage One\n\n' + EXAM_PASSAGE + '\n21. What is the main idea?\nA) Books.'
+        return CompletedProcess(command, 0, text.encode(), b'')
+
+    monkeypatch.setattr('backend.pdf_ocr.shutil.which', lambda _: '/example/tesseract')
+    monkeypatch.setattr('backend.pdf_ocr.subprocess.run', recognize)
+    writer = PdfWriter()
+    with scanned_page_pdf() as scan:
+        writer.add_page(PdfReader(scan).pages[0])
+    # A scan may still have a small selectable watermark or page header.
+    page = writer.pages[0]
+    stamp = PdfWriter()
+    set_pdf_page_text(stamp.add_blank_page(width=350, height=470), 'Practice Exam')
+    page.merge_page(stamp.pages[0])
+    with BytesIO() as content:
+        writer.write(content)
+        response = client.post('/api/articles/extract?format=pdf', content=content.getvalue())
+    assert response.status_code == 200
+    assert response.json()['ocr_pages'] == [1]
+    assert response.json()['articles'][0]['body'] == EXAM_PASSAGE
+
+
+def test_unrecognized_exam_returns_original_with_warning_and_normal_import_is_unchanged(client):
+    original = 'Text 1\n\n' + EXAM_PASSAGE
+    normal = client.post('/api/articles/extract?format=txt', content=original.encode()).json()
+    assert 'extraction_kind' not in normal
+    forced = client.post('/api/articles/extract?format=txt&mode=exam', content=EXAM_PASSAGE.encode()).json()
+    assert forced['body'] == EXAM_PASSAGE
+    assert forced['articles'] == []
+    assert forced['extraction_kind'] == 'exam'
+    assert '暂未可靠识别' in forced['warnings'][0]
+
+
+def test_ielts_paragraph_labels_stay_together_and_answer_explanations_are_excluded(client):
+    paper = '\n\n'.join([
+        'IELTS Academic Reading', 'Reading Passage 1', 'A', EXAM_PASSAGE,
+        'B', EXAM_PASSAGE, 'Questions 1-5', '1. Choose the best heading.',
+        'Answer key', 'Reading Passage 1', EXAM_PASSAGE,
+    ])
+    preview = client.post('/api/articles/extract?format=txt', content=paper.encode()).json()
+    assert len(preview['articles']) == 1
+    assert preview['articles'][0]['title'] == '阅读文章 1'
+    assert preview['articles'][0]['body'].count(EXAM_PASSAGE) == 2
+    assert 'Choose the best heading' not in preview['articles'][0]['body']
+
+
+def test_cet_question_ranges_and_numbered_ocr_questions(client):
+    paper = '\n\n'.join([
+        'Passage One', 'Questions 46 to 50 are based on the following passage.',
+        EXAM_PASSAGE, '46 What is the main idea?', 'A) Books.',
+        'Questions 51-55 are based on the following passage.', EXAM_PASSAGE,
+        '51. Which statement is true?', 'A) More books.',
+    ])
+    preview = client.post('/api/articles/extract?format=txt', content=paper.encode()).json()
+    assert len(preview['articles']) == 2
+    assert all(article['body'] == EXAM_PASSAGE for article in preview['articles'])

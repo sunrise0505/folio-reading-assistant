@@ -26,6 +26,7 @@
 | [backend/main.py](../backend/main.py) | 应用初始化、输入校验、API、数据库会话与写入事务 |
 | [backend/models.py](../backend/models.py) | SQLAlchemy 数据模型、唯一约束和外键 |
 | [backend/reading.py](../backend/reading.py) | 文本处理、词形还原、离线词典查询、难度估算 |
+| [backend/exam_import.py](../backend/exam_import.py) | 从已提取的试卷文本识别阅读分节，连接跨页正文并排除题干、选项、页码和答案区 |
 | [backend/data/](../backend/data/) 与 [scripts/build_dictionary.py](../scripts/build_dictionary.py) | 样文、数据许可、词典资源与词典生成脚本 |
 | [tests/test_workflow.py](../tests/test_workflow.py) | 用临时 SQLite 数据库验证主要 API 流程 |
 
@@ -48,7 +49,7 @@
 | --- | --- |
 | `GET /api/articles`、`GET /api/articles/{id}`、`POST /api/articles` | 列表、段落详情、单篇导入。详情附对应译文及词表收录的短语位置。 |
 | `PATCH /api/articles/{id}/translation` | 存储与原文段数一致的译文。提交空白时清除用户译文。 |
-| `POST /api/articles/extract?format=...` | 读取 UTF-8 TXT／Markdown 或用 python-docx、pypdf 提取正文。按标题、分隔线或 PDF 顶层书签的起始页返回候选篇目与整份正文。文档和预览不写入数据库。 |
+| `POST /api/articles/extract?format=...&mode=auto` | 读取 UTF-8 TXT／Markdown 或用 python-docx、pypdf 提取正文。扫描 PDF 的图片页经 PDFium 渲染并交给本地 Tesseract 识别英文，返回使用 OCR 的页码 `ocr_pages`。按标题、分隔线或 PDF 顶层书签的起始页返回候选篇目与整份正文。自动检测常见试卷分节，`mode=exam` 可指定试卷模式。试卷预览额外返回 `extraction_kind: exam` 和 `warnings`。不足 45 个英文词的候选仅提示，未识别时返回整份正文和空候选列表。文档和预览仅用于当前导入请求。 |
 | `POST /api/articles/batch` | 校验后在同一事务保存已勾选的文章，返回文章 ID。 |
 | `DELETE /api/articles/{id}` | 将文章从目录移除，重复提交不会改变结果。 |
 | `PATCH /api/articles/{id}/progress`、`POST /api/articles/{id}/complete` | 保存有效段落位置。首次完成文章会在同一事务增加当天阅读数。 |

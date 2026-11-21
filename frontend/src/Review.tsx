@@ -229,7 +229,7 @@ function Flashcards({ group, cards, busy, error, onPick, onRate, onResolve, onCl
 }
 
 function ReviewEmpty({ onRead }: { onRead: () => void }) {
-  return <Empty title="今天没有待复习的卡片" illustration={<ArticleCover category="我的导入" title="Review" />}>
+  return <Empty title="今天没有待复习的卡片" illustration={<ArticleCover category="我的导入" label="Review" />}>
     <Button onClick={onRead}>去读文章</Button>
   </Empty>
 }
