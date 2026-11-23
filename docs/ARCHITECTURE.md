@@ -30,6 +30,8 @@
 | [backend/data/](../backend/data/) 与 [scripts/build_dictionary.py](../scripts/build_dictionary.py) | 样文、数据许可、词典资源与词典生成脚本 |
 | [tests/test_workflow.py](../tests/test_workflow.py) | 用临时 SQLite 数据库验证主要 API 流程 |
 
+生词筛选、排序和 CSV 编码位于 `frontend/src/vocabulary.ts`。列表和导出共用筛选结果，来源条件同时作用于出处。CSV 使用 UTF-8 BOM、CRLF 行分隔和双引号转义；可能被表格软件执行的公式前缀加单引号处理。相关回归测试可用 `node --experimental-strip-types --test tests/test_vocabulary.mjs` 执行。
+
 ## 数据模型
 
 | 表 | 主要内容和约定 |

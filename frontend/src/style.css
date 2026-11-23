@@ -304,6 +304,8 @@ button:disabled { color: var(--muted); }
 .reader-tools { display: flex; position: relative; min-height: 44px; justify-content: space-between; align-items: center; gap: 12px; }
 .reader-tools-right { display: flex; min-width: 0; align-items: center; gap: 12px; }
 .paragraph-count { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.paragraph-navigation-actions { display: flex; gap: 10px; }
+.paragraph-preview { padding: 12px; background: var(--rule-soft); font: 17px/1.6 var(--serif); overflow-wrap: anywhere; }
 .reading-mode { min-height: 36px; padding: 4px 6px; border: 1px solid var(--control-rule); border-radius: var(--radius); background: var(--surface); color: var(--ink); font-size: 13px; }
 .reading-paper { width: min(calc(100% - 2 * var(--gutter)), 100%); margin: 25px auto 52px; padding: 38px clamp(22px, 4vw, 48px) 38px; background: var(--reading-surface); border: 1px solid var(--rule); }
 .reading-heading { border-bottom: 1px solid var(--rule); padding-bottom: 19px; margin-bottom: 17px; }
@@ -371,6 +373,12 @@ summary:active { background: var(--accent-soft); }
   font-size: 14px;
 }
 .list-controls select { width: min(250px, 49%); }
+.vocabulary-controls { flex-wrap: wrap; }
+.vocabulary-controls .search-field { flex: 1 1 260px; }
+.vocabulary-controls select { flex: 1 1 150px; min-width: 0; width: auto; max-width: 100%; }
+.vocabulary-results { display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; align-items: center; margin-bottom: 18px; }
+.vocabulary-results p, .vocabulary-export-notice { font-size: 13px; color: var(--ink-secondary); }
+.vocabulary-export-notice { margin-bottom: 16px; }
 .field :disabled, .answer-input:disabled { color: var(--muted); background: var(--rule-soft); }
 ::placeholder { color: var(--muted); opacity: 1; }
 .vocabulary-exams { margin-bottom: 20px; padding: clamp(15px, 3vw, 25px); }

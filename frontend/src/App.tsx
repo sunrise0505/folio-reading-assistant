@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
-import { ArrowRight, ArrowUpRight, Check, ChevronLeft, ChevronRight, Plus, Trash2, X } from 'lucide-react'
+import { ArrowRight, ArrowUpRight, Check, ChevronLeft, ChevronRight, Download, Plus, Trash2, X } from 'lucide-react'
 import { api, errorText, examLevels } from './api'
 import type { Activity, Article, Mastery, ReaderArticle, Vocabulary } from './api'
 import { ArticleCard, FeaturedArticleCard } from './ArticleCard'
@@ -8,6 +8,8 @@ import { ArticleCover, articleCoverImage } from './ArticleCover'
 import { ImportForm } from './ImportForm'
 import { Reader } from './Reader'
 import { Review } from './Review'
+import { filterVocabulary, vocabularyCsv } from './vocabulary'
+import type { VocabularyFilters } from './vocabulary'
 import { Button, Empty, IconButton, Modal, PageHeading, SearchField, Tag } from './ui'
 
 type View = 'library' | 'vocabulary' | 'review' | 'activity'
@@ -174,13 +176,28 @@ function VocabularyList({ words, onChange, onOpen, onRead }: {
 }) {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState('')
+  const [status, setStatus] = useState<Mastery | ''>('')
+  const [sort, setSort] = useState<VocabularyFilters['sort']>('newest')
+  const [exportNotice, setExportNotice] = useState('')
   const [edit, setEdit] = useState<Vocabulary>()
   const [deleting, setDeleting] = useState<Vocabulary>()
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const articles = new Map(words.flatMap(word => word.examples.map(example => [example.article_id, example.title] as const)))
-  const shown = words.filter(word => (word.lemma + ' ' + word.meaning).toLowerCase().includes(query.trim().toLowerCase()) &&
-    (!filter || word.examples.some(example => String(example.article_id) === filter)))
+  const activeSource = articles.has(Number(filter)) ? filter : ''
+  const shown = filterVocabulary(words, { query, source: activeSource, status, sort })
+
+  function exportWords() {
+    const url = URL.createObjectURL(new Blob([vocabularyCsv(shown, activeSource)], { type: 'text/csv;charset=utf-8' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = '拾页生词本-' + new Date().toLocaleDateString('sv-SE') + '.csv'
+    document.body.append(link)
+    link.click()
+    link.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+    setExportNotice(`已生成 ${shown.length} 个义项的 CSV 文件，每条出处占一行。`)
+  }
 
   async function save(event: FormEvent) {
     event.preventDefault()
@@ -216,13 +233,24 @@ function VocabularyList({ words, onChange, onOpen, onRead }: {
   return <div className="page-content inner-page">
     <PageHeading label="Vocabulary" title="生词本"><p>{words.length} 个收藏义项</p></PageHeading>
     <VocabularyExamStats words={words} />
-    <div className="list-controls">
-      <SearchField label="搜索生词" placeholder="搜索单词或释义" value={query} onChange={event => setQuery(event.target.value)} />
-      <select aria-label="按文章筛选" value={filter} onChange={event => setFilter(event.target.value)}><option value="">全部来源</option>{Array.from(articles, ([id, title]) => <option key={id} value={id}>{title}</option>)}</select>
+    <div className="list-controls vocabulary-controls">
+      <SearchField label="搜索生词" placeholder="搜索单词、释义或备注" value={query} onChange={event => setQuery(event.target.value)} />
+      <select aria-label="按文章筛选" value={activeSource} onChange={event => setFilter(event.target.value)}><option value="">全部来源</option>{Array.from(articles, ([id, title]) => <option key={id} value={id}>{title}</option>)}</select>
+      <select aria-label="按掌握度筛选" value={status} onChange={event => setStatus(event.target.value as Mastery | '')}>
+        <option value="">全部掌握度</option><option>学习中</option><option>已掌握</option>
+      </select>
+      <select aria-label="生词排序" value={sort} onChange={event => setSort(event.target.value as VocabularyFilters['sort'])}>
+        <option value="newest">最近收藏</option><option value="due">复习日期从早到晚</option><option value="alphabetical">字母顺序</option>
+      </select>
     </div>
+    <div className="vocabulary-results">
+      <p role="status">显示 {shown.length} / {words.length} 个义项</p>
+      <Button disabled={!shown.length} onClick={exportWords}><Download size={16} aria-hidden="true" />导出当前结果</Button>
+    </div>
+    {exportNotice && <p className="muted vocabulary-export-notice" role="status">{exportNotice}</p>}
     {!shown.length ? <Empty title={words.length ? '没有找到生词' : '还没有收藏生词'}
       illustration={<ArticleCover category="文化与生活" label="Words" />}>
-      {words.length ? <Button variant="text" onClick={() => { setQuery(''); setFilter('') }}>清除筛选</Button> :
+      {words.length ? <Button variant="text" onClick={() => { setQuery(''); setFilter(''); setStatus('') }}>清除筛选</Button> :
         <Button onClick={onRead}>去读文章</Button>}
     </Empty> : <div className="word-list">
       <div className="word-index-heading" aria-hidden="true"><span>单词与释义</span><span>原句与来源</span><span>学习记录</span></div>
@@ -235,7 +263,7 @@ function VocabularyList({ words, onChange, onOpen, onRead }: {
           <p>{word.meaning}</p>
         </div>
         <div className="word-context">
-          {word.examples.filter(example => !filter || String(example.article_id) === filter).map(example =>
+          {word.examples.filter(example => !activeSource || String(example.article_id) === activeSource).map(example =>
             <div className="saved-example" key={[example.article_id, example.paragraph, example.start, example.sentence].join('|')}>
               <blockquote lang="en">{example.sentence}</blockquote>
               <Button variant="text" onClick={() => onOpen(example.article_id, example.paragraph)}>{example.title}{example.paragraph === -1 ? ' · 标题' : ''} <ArrowUpRight size={13} aria-hidden="true" /></Button>
