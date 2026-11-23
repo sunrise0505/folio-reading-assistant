@@ -82,6 +82,7 @@ export function Reader({ article, words, anchor, onBack, backLabel, onUpdate, on
   const [translationError, setTranslationError] = useState('')
   const [savingTranslation, setSavingTranslation] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  const [navigationTarget, setNavigationTarget] = useState<number>()
   const [keyboardWord, setKeyboardWord] = useState<{ paragraph: number; index: number; anchor: number }>()
   const [lookup, setLookup] = useState<Lookup>()
   const [customMeaning, setCustomMeaning] = useState('')
@@ -208,7 +209,8 @@ export function Reader({ article, words, anchor, onBack, backLabel, onUpdate, on
       const paragraphs = Array.from(body.current?.querySelectorAll<HTMLElement>('[data-paragraph]') ?? [])
       if (!paragraphs.length) return
       const boundary = readingBoundary()
-      const next = paragraphs.findLastIndex(node => node.getBoundingClientRect().top <= boundary)
+      const atEnd = window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2
+      const next = atEnd ? paragraphs.length - 1 : paragraphs.findLastIndex(node => node.getBoundingClientRect().top <= boundary)
       current.current = Math.max(0, next)
       setParagraph(current.current)
       clearTimeout(timer)
@@ -425,7 +427,16 @@ export function Reader({ article, words, anchor, onBack, backLabel, onUpdate, on
         <div className="reader-tools">
           <Button variant="text" onClick={onBack}><ArrowLeft size={16} aria-hidden="true" /> {backLabel}</Button>
           <div className="reader-tools-right">
-            <span className="paragraph-count">第 {paragraph + 1} / {article.paragraphs.length} 段</span>
+            <Button variant="text" className="paragraph-count" aria-label={`段落导航，当前第 ${paragraph + 1} 段，共 ${article.paragraphs.length} 段`}
+              onClick={() => {
+                setShowSettings(false)
+                sequence.current++
+                setLookup(undefined)
+                lookupTrigger.current = null
+                setNavigationTarget(paragraph + 1)
+              }}>
+              第 {paragraph + 1} / {article.paragraphs.length} 段
+            </Button>
             <select className="reading-mode" aria-label="阅读模式" value={bilingual ? 'bilingual' : 'english'}
               onChange={event => changeReadingMode(event.target.value === 'bilingual')}>
               <option value="english">纯英文</option>
@@ -556,6 +567,32 @@ export function Reader({ article, words, anchor, onBack, backLabel, onUpdate, on
           )}
         </section>
       )}
+      {navigationTarget !== undefined && <Modal title="段落导航" close={() => setNavigationTarget(undefined)}>
+        <form className="form-stack" onSubmit={event => {
+          event.preventDefault()
+          if (!Number.isInteger(navigationTarget) || navigationTarget < 1 || navigationTarget > article.paragraphs.length) return
+          const index = navigationTarget - 1
+          setNavigationTarget(undefined)
+          requestAnimationFrame(() => {
+            jumpTo(index)
+            body.current?.querySelector<HTMLElement>(`[data-paragraph="${index}"]`)?.focus({ preventScroll: true })
+          })
+        }}>
+          <label className="field">跳转到第几段（共 {article.paragraphs.length} 段）
+            <input type="number" min={1} max={article.paragraphs.length} step={1} required autoFocus
+              value={Number.isNaN(navigationTarget) ? '' : navigationTarget}
+              onChange={event => setNavigationTarget(event.target.valueAsNumber)} />
+          </label>
+          <div className="paragraph-navigation-actions">
+            <Button disabled={!Number.isInteger(navigationTarget) || navigationTarget <= 1} onClick={() => setNavigationTarget(navigationTarget - 1)}>上一段</Button>
+            <Button disabled={!Number.isInteger(navigationTarget) || navigationTarget >= article.paragraphs.length} onClick={() => setNavigationTarget(navigationTarget + 1)}>下一段</Button>
+          </div>
+          {article.paragraphs[navigationTarget - 1] && <p className="paragraph-preview" lang="en">
+            {article.paragraphs[navigationTarget - 1].slice(0, 240)}{article.paragraphs[navigationTarget - 1].length > 240 ? '…' : ''}
+          </p>}
+          <div className="modal-actions"><Button variant="primary" type="submit">跳转并继续阅读</Button></div>
+        </form>
+      </Modal>}
       {translationDraft !== undefined && <Modal title="中文译文" close={() => { if (!savingTranslation) setTranslationDraft(undefined) }}>
         <form className="form-stack" onSubmit={saveTranslation}>
           <p className="muted">原文共 {article.paragraphs.length} 段。请按顺序粘贴译文，段落之间留一空行。保存空白可清除自填译文。</p>
